@@ -1,0 +1,49 @@
+server:
+  port: 8080
+
+app:
+  # Primary model: served synchronously to the user.
+  # Default points at the local OpenAI-shaped mock endpoint.
+  primary:
+    provider: openai
+    base-url: http://localhost:8080/mock/primary
+    model: mock-primary-v1
+    api-key-env: PRIMARY_API_KEY
+    timeout-seconds: 30
+
+  # Shadow (candidate) model: run asynchronously, never user-facing.
+  # Default points at the local Anthropic-shaped mock endpoint to exercise the adapter layer.
+  shadow:
+    provider: anthropic
+    base-url: http://localhost:8080/mock/shadow
+    model: mock-shadow-v1
+    api-key-env: SHADOW_API_KEY
+    timeout-seconds: 60
+
+  # Judge model: only used when semantic similarity is inconclusive.
+  # Default points at the local OpenAI-shaped mock judge, which returns scenario-mapped verdicts.
+  # Set provider: mock to use the simple in-process judge instead (no HTTP).
+  judge:
+    provider: openai
+    base-url: http://localhost:8080/mock/judge
+    model: mock-judge
+    api-key-env: JUDGE_API_KEY
+    timeout-seconds: 60
+
+  evaluation:
+    similarity-threshold: 0.90
+    embedding-provider: lexical
+    embedding-model: bow-cosine
+
+  shadow-mode:
+    enabled: true
+    log-mismatches: true
+    mismatch-log-path: ./logs/mismatches.jsonl
+
+  shadow-executor:
+    pool-size: 8
+    queue-capacity: 500
+
+logging:
+  level:
+    com.shadowproxy: INFO

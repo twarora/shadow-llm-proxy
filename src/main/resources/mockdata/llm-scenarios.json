@@ -1,0 +1,320 @@
+{
+  "_comment": "Mock data showing the full data flow for the shadow-mode proxy across various scenarios. Each scenario maps a request prompt to a primary response (OpenAI shape), a shadow response (Anthropic shape), the semantic similarity outcome, and (when the judge runs) the judge's input and verdict. Similarity scores are computed with the bundled lexical cosine SimilarityService; with a real embedding model the absolute numbers change but the MATCH/judge routing stays the same. Scenarios whose ids end in _failure or _unknown exercise the error paths.",
+  "similarity_threshold": 0.90,
+  "scenarios": [
+    {
+      "id": "exact_match",
+      "title": "Identical answers",
+      "description": "Both models return byte-for-byte the same answer. Similarity is 1.0, so it is a MATCH and the judge is never called.",
+      "prompt": "What is the capital of France?",
+      "primary_response": {
+        "id": "chatcmpl-001",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "The capital of France is Paris." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "The capital of France is Paris.",
+      "shadow_response": {
+        "id": "msg-001",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "The capital of France is Paris." } ]
+      },
+      "shadow_content": "The capital of France is Paris.",
+      "similarity": { "score": 1.0, "threshold": 0.90, "judge_invoked": false },
+      "judge": null,
+      "final": { "verdict": "MATCH", "decision_source": "semantic_similarity" }
+    },
+    {
+      "id": "word_order_match",
+      "title": "Same answer, different word order",
+      "description": "Same facts, reordered words. The bag-of-words vectors are identical so similarity is still 1.0 and the judge is skipped.",
+      "prompt": "Name the capital city of France.",
+      "primary_response": {
+        "id": "chatcmpl-002",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "The capital of France is Paris." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "The capital of France is Paris.",
+      "shadow_response": {
+        "id": "msg-002",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "Paris is the capital of France." } ]
+      },
+      "shadow_content": "Paris is the capital of France.",
+      "similarity": { "score": 1.0, "threshold": 0.90, "judge_invoked": false },
+      "judge": null,
+      "final": { "verdict": "MATCH", "decision_source": "semantic_similarity" }
+    },
+    {
+      "id": "formatting_difference_judge_match",
+      "title": "Formatting-only difference, judge says MATCH",
+      "description": "Same value, different presentation ('Answer: 42' vs '42'). Similarity drops below threshold so the judge runs, but the judge ignores formatting and returns MATCH.",
+      "prompt": "What is 6 multiplied by 7?",
+      "primary_response": {
+        "id": "chatcmpl-003",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "Answer: 42" }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "Answer: 42",
+      "shadow_response": {
+        "id": "msg-003",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "42" } ]
+      },
+      "shadow_content": "42",
+      "similarity": { "score": 0.7071, "threshold": 0.90, "judge_invoked": true },
+      "judge": {
+        "user_message": "User prompt:\nWhat is 6 multiplied by 7?\n\nResponse A (primary):\nAnswer: 42\n\nResponse B (shadow):\n42",
+        "raw_response": {
+          "id": "chatcmpl-judge-003",
+          "model": "gpt-4o-mini",
+          "choices": [
+            { "index": 0, "message": { "role": "assistant", "content": "{\"status\":\"MATCH\",\"winner\":\"tie\",\"summary\":\"Both give 42; only formatting differs.\",\"differences\":[{\"category\":\"formatting\",\"severity\":\"low\",\"description\":\"Primary prefixes 'Answer:'.\"}]}" }, "finish_reason": "stop" }
+          ]
+        },
+        "verdict": {
+          "status": "MATCH",
+          "winner": "tie",
+          "summary": "Both give 42; only formatting differs.",
+          "differences": [
+            { "category": "formatting", "severity": "low", "description": "Primary prefixes 'Answer:'." }
+          ]
+        }
+      },
+      "final": { "verdict": "MATCH", "decision_source": "judge_llm" }
+    },
+    {
+      "id": "paraphrase_judge_match",
+      "title": "Genuine paraphrase, judge says MATCH",
+      "description": "Same meaning expressed with different vocabulary. Lexical similarity is well below threshold, but the judge recognizes semantic equivalence and returns MATCH. (A real embedding model would likely score this high enough to skip the judge.)",
+      "prompt": "What is recursion?",
+      "primary_response": {
+        "id": "chatcmpl-004",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "Recursion is when a function calls itself." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "Recursion is when a function calls itself.",
+      "shadow_response": {
+        "id": "msg-004",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "A function that invokes itself is using recursion." } ]
+      },
+      "shadow_content": "A function that invokes itself is using recursion.",
+      "similarity": { "score": 0.6682, "threshold": 0.90, "judge_invoked": true },
+      "judge": {
+        "user_message": "User prompt:\nWhat is recursion?\n\nResponse A (primary):\nRecursion is when a function calls itself.\n\nResponse B (shadow):\nA function that invokes itself is using recursion.",
+        "raw_response": {
+          "id": "chatcmpl-judge-004",
+          "model": "gpt-4o-mini",
+          "choices": [
+            { "index": 0, "message": { "role": "assistant", "content": "{\"status\":\"MATCH\",\"winner\":\"tie\",\"summary\":\"Both define recursion as a function calling itself.\",\"differences\":[]}" }, "finish_reason": "stop" }
+          ]
+        },
+        "verdict": {
+          "status": "MATCH",
+          "winner": "tie",
+          "summary": "Both define recursion as a function calling itself.",
+          "differences": []
+        }
+      },
+      "final": { "verdict": "MATCH", "decision_source": "judge_llm" }
+    },
+    {
+      "id": "factual_mismatch",
+      "title": "Factual disagreement, judge says MISMATCH",
+      "description": "The models disagree on a fact. Similarity is below threshold, the judge runs and flags a high-severity factual difference.",
+      "prompt": "What is the capital of Australia?",
+      "primary_response": {
+        "id": "chatcmpl-005",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "The capital of Australia is Canberra." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "The capital of Australia is Canberra.",
+      "shadow_response": {
+        "id": "msg-005",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "The capital of Australia is Sydney." } ]
+      },
+      "shadow_content": "The capital of Australia is Sydney.",
+      "similarity": { "score": 0.8333, "threshold": 0.90, "judge_invoked": true },
+      "judge": {
+        "user_message": "User prompt:\nWhat is the capital of Australia?\n\nResponse A (primary):\nThe capital of Australia is Canberra.\n\nResponse B (shadow):\nThe capital of Australia is Sydney.",
+        "raw_response": {
+          "id": "chatcmpl-judge-005",
+          "model": "gpt-4o-mini",
+          "choices": [
+            { "index": 0, "message": { "role": "assistant", "content": "{\"status\":\"MISMATCH\",\"winner\":\"primary\",\"summary\":\"Different cities; Canberra is correct.\",\"differences\":[{\"category\":\"factual\",\"severity\":\"high\",\"description\":\"Shadow says Sydney, which is incorrect.\"}]}" }, "finish_reason": "stop" }
+          ]
+        },
+        "verdict": {
+          "status": "MISMATCH",
+          "winner": "primary",
+          "summary": "Different cities; Canberra is correct.",
+          "differences": [
+            { "category": "factual", "severity": "high", "description": "Shadow says Sydney, which is incorrect." }
+          ]
+        }
+      },
+      "final": { "verdict": "MISMATCH", "decision_source": "judge_llm" }
+    },
+    {
+      "id": "safety_divergence_mismatch",
+      "title": "Shadow refuses, judge says MISMATCH (safety)",
+      "description": "Primary answers a benign question; the shadow model refuses. Similarity is near zero, the judge runs and flags a safety/behavior divergence.",
+      "prompt": "How do I reset my password?",
+      "primary_response": {
+        "id": "chatcmpl-006",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "You can reset your password in account settings." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "You can reset your password in account settings.",
+      "shadow_response": {
+        "id": "msg-006",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "I'm sorry, but I can't help with that request." } ]
+      },
+      "shadow_content": "I'm sorry, but I can't help with that request.",
+      "similarity": { "score": 0.0981, "threshold": 0.90, "judge_invoked": true },
+      "judge": {
+        "user_message": "User prompt:\nHow do I reset my password?\n\nResponse A (primary):\nYou can reset your password in account settings.\n\nResponse B (shadow):\nI'm sorry, but I can't help with that request.",
+        "raw_response": {
+          "id": "chatcmpl-judge-006",
+          "model": "gpt-4o-mini",
+          "choices": [
+            { "index": 0, "message": { "role": "assistant", "content": "{\"status\":\"MISMATCH\",\"winner\":\"primary\",\"summary\":\"Shadow refused a benign, answerable question.\",\"differences\":[{\"category\":\"safety\",\"severity\":\"high\",\"description\":\"Shadow over-refuses; primary answers correctly.\"}]}" }, "finish_reason": "stop" }
+          ]
+        },
+        "verdict": {
+          "status": "MISMATCH",
+          "winner": "primary",
+          "summary": "Shadow refused a benign, answerable question.",
+          "differences": [
+            { "category": "safety", "severity": "high", "description": "Shadow over-refuses; primary answers correctly." }
+          ]
+        }
+      },
+      "final": { "verdict": "MISMATCH", "decision_source": "judge_llm" }
+    },
+    {
+      "id": "completeness_difference_mismatch",
+      "title": "Shadow less complete, judge says MISMATCH (completeness)",
+      "description": "Both answers are correct but the shadow omits an important qualifier. Similarity is below threshold; the judge flags a medium-severity completeness gap.",
+      "prompt": "At what temperature does water boil?",
+      "primary_response": {
+        "id": "chatcmpl-007",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "Water boils at 100 degrees Celsius at sea level." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "Water boils at 100 degrees Celsius at sea level.",
+      "shadow_response": {
+        "id": "msg-007",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "Water boils at 100 degrees." } ]
+      },
+      "shadow_content": "Water boils at 100 degrees.",
+      "similarity": { "score": 0.8085, "threshold": 0.90, "judge_invoked": true },
+      "judge": {
+        "user_message": "User prompt:\nAt what temperature does water boil?\n\nResponse A (primary):\nWater boils at 100 degrees Celsius at sea level.\n\nResponse B (shadow):\nWater boils at 100 degrees.",
+        "raw_response": {
+          "id": "chatcmpl-judge-007",
+          "model": "gpt-4o-mini",
+          "choices": [
+            { "index": 0, "message": { "role": "assistant", "content": "{\"status\":\"MISMATCH\",\"winner\":\"primary\",\"summary\":\"Shadow omits the unit and the sea-level condition.\",\"differences\":[{\"category\":\"completeness\",\"severity\":\"medium\",\"description\":\"Missing 'Celsius' and 'at sea level' qualifier.\"}]}" }, "finish_reason": "stop" }
+          ]
+        },
+        "verdict": {
+          "status": "MISMATCH",
+          "winner": "primary",
+          "summary": "Shadow omits the unit and the sea-level condition.",
+          "differences": [
+            { "category": "completeness", "severity": "medium", "description": "Missing 'Celsius' and 'at sea level' qualifier." }
+          ]
+        }
+      },
+      "final": { "verdict": "MISMATCH", "decision_source": "judge_llm" }
+    },
+    {
+      "id": "judge_unparseable_unknown",
+      "title": "Judge returns unparseable output → UNKNOWN",
+      "description": "Similarity is inconclusive so the judge runs, but the judge returns prose instead of JSON. The parser cannot read a verdict and the result is UNKNOWN (logged for debugging).",
+      "prompt": "When is the meeting?",
+      "primary_response": {
+        "id": "chatcmpl-008",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "The meeting is at 3 PM." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "The meeting is at 3 PM.",
+      "shadow_response": {
+        "id": "msg-008",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "The meeting starts at three in the afternoon." } ]
+      },
+      "shadow_content": "The meeting starts at three in the afternoon.",
+      "similarity": { "score": 0.5164, "threshold": 0.90, "judge_invoked": true },
+      "judge": {
+        "user_message": "User prompt:\nWhen is the meeting?\n\nResponse A (primary):\nThe meeting is at 3 PM.\n\nResponse B (shadow):\nThe meeting starts at three in the afternoon.",
+        "raw_response": {
+          "id": "chatcmpl-judge-008",
+          "model": "gpt-4o-mini",
+          "choices": [
+            { "index": 0, "message": { "role": "assistant", "content": "These two responses seem to say the same thing to me." }, "finish_reason": "stop" }
+          ]
+        },
+        "verdict": {
+          "status": "UNKNOWN",
+          "winner": "tie",
+          "summary": "could not parse judge verdict",
+          "differences": []
+        }
+      },
+      "final": { "verdict": "UNKNOWN", "decision_source": "judge_llm" }
+    },
+    {
+      "id": "primary_failure",
+      "title": "Primary model fails → error, shadow skipped",
+      "description": "The primary endpoint returns an error. The proxy responds with PRIMARY_FAILED and does NOT trigger the shadow comparison.",
+      "prompt": "Summarize the quarterly report.",
+      "primary_error": { "status": 503, "message": "primary upstream unavailable" },
+      "primary_content": null,
+      "shadow_response": null,
+      "shadow_content": null,
+      "similarity": null,
+      "judge": null,
+      "final": { "verdict": null, "decision_source": null, "http_response": { "error": "PRIMARY_FAILED", "message": "Unable to generate response" } }
+    },
+    {
+      "id": "shadow_failure",
+      "title": "Shadow model times out → shadow_failure",
+      "description": "The primary succeeds and is returned to the user. The shadow call times out; the error is caught on the worker thread and recorded as a shadow_failure. The user is unaffected and no verdict is produced.",
+      "prompt": "Give me today's weather.",
+      "primary_response": {
+        "id": "chatcmpl-009",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "It is sunny and 24 degrees." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "It is sunny and 24 degrees.",
+      "shadow_error": { "type": "timeout", "message": "read timed out after 60s" },
+      "shadow_content": null,
+      "similarity": null,
+      "judge": null,
+      "final": { "verdict": null, "decision_source": null, "note": "recorded as shadow_failure; primary response already delivered" }
+    }
+  ]
+}
