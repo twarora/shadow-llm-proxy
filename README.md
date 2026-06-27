@@ -78,7 +78,7 @@ the **exact shape of the data** at every hop. The type column shows what the dat
 The client sends a prompt. `request_id` is optional (auto-generated if omitted).
 
 ```json
-{ "request_id": "req_1", "prompt": "What is recursion?" }
+{ "request_id": "req_1", "prompt": "What is the capital of France?" }
 ```
 
 → deserialized into a `GenerateRequest` object.
@@ -95,7 +95,7 @@ envelope**. With the default config the primary is OpenAI-shaped:
   "choices": [
     {
       "index": 0,
-      "message": { "role": "assistant", "content": "The answer to \"What is recursion?\" is 42." },
+      "message": { "role": "assistant", "content": "The capital of France is Paris." },
       "finish_reason": "stop"
     }
   ]
@@ -110,7 +110,7 @@ At this point the answer is **buried inside** `choices[0].message.content`. Ever
 `ProviderAdapter.extractContent("openai", raw)` reduces that envelope to **one plain string**:
 
 ```
-"The answer to \"What is recursion?\" is 42."
+"The capital of France is Paris."
 ```
 
 This is the only thing the rest of the system cares about. Type: `String`.
@@ -120,7 +120,7 @@ This is the only thing the rest of the system cares about. Type: `String`.
 The controller wraps the primary content and returns — **before** the shadow does any work:
 
 ```json
-{ "request_id": "req_1", "response": "The answer to \"What is recursion?\" is 42." }
+{ "request_id": "req_1", "response": "The capital of France is Paris." }
 ```
 
 ### Step 5 — Context handed to the shadow task
@@ -130,8 +130,8 @@ request object). This is what "survives the connection closing":
 
 ```text
 requestId      = "req_1"
-prompt         = "What is recursion?"
-primaryContent = "The answer to \"What is recursion?\" is 42."
+prompt         = "What is the capital of France?"
+primaryContent = "The capital of France is Paris."
 ```
 
 From here everything runs on a `shadow-worker-*` thread.
@@ -146,7 +146,7 @@ why the adapter layer exists:
   "id": "mock-shadow-1",
   "model": "mock-shadow-v1",
   "content": [
-    { "type": "text", "text": "The answer to \"What is recursion?\" is 42." }
+    { "type": "text", "text": "Paris is the capital of France." }
   ]
 }
 ```
@@ -156,7 +156,7 @@ why the adapter layer exists:
 `ProviderAdapter.extractContent("anthropic", raw)` reads `content[0].text`:
 
 ```
-"The answer to \"What is recursion?\" is 42."
+"Paris is the capital of France."
 ```
 
 Now we have **two plain strings** to compare — regardless of which providers produced them.
@@ -166,13 +166,14 @@ Now we have **two plain strings** to compare — regardless of which providers p
 `SimilarityService.similarity(primaryContent, shadowContent)` returns a `double`:
 
 ```text
-primaryContent = "The answer to \"What is recursion?\" is 42."
-shadowContent  = "The answer to \"What is recursion?\" is 42."
-similarity     = 1.0     // identical → cosine 1.0
+primaryContent = "The capital of France is Paris."
+shadowContent  = "Paris is the capital of France."
+similarity     = 1.0     // same words, reordered → cosine 1.0
 threshold      = 0.90
 ```
 
-Because `1.0 >= 0.90`, this is a **MATCH** and the judge is **skipped**. The result is:
+Because `1.0 >= 0.90`, this is a **MATCH** and the judge is **skipped** (even though the wording
+differs, the meaning is identical). The result is:
 
 ```text
 EvaluationResult {
@@ -189,34 +190,36 @@ Jump to Step 12.
 
 ### The MISMATCH path (Steps 8–11 when the answers diverge)
 
-Send `{"prompt":"[mismatch] anything"}`. Now the two content strings differ:
+This uses a real scenario: the prompt **"What is the capital of Australia?"** where the two models
+disagree on the fact (see scenario `factual_mismatch` in the fixtures). The two content strings are:
 
 ```text
-primaryContent = "The answer to \"[mismatch] anything\" is 42."
-shadowContent  = "I'm sorry, but I can't help with that request."
-similarity     = 0.0     // disjoint vocabulary → low score
+prompt         = "What is the capital of Australia?"
+primaryContent = "The capital of Australia is Canberra."
+shadowContent  = "The capital of Australia is Sydney."
+similarity     = 0.8333   // high lexical overlap, but below threshold
+threshold      = 0.90
 ```
 
-`0.0 < 0.90`, so similarity is **inconclusive** → fall through to the judge.
+`0.8333 < 0.90`, so similarity is **inconclusive** → fall through to the judge.
 
 #### Step 9 — Judge input
 
 `DefaultJudgeService` builds two strings: the fixed evaluator **system prompt** and a **user
-message** containing the prompt and both answers:
+message** containing the real prompt and both answers:
 
 ```text
 User prompt:
-[mismatch] anything
+What is the capital of Australia?
 
 Response A (primary):
-The answer to "[mismatch] anything" is 42.
+The capital of Australia is Canberra.
 
 Response B (shadow):
-I'm sorry, but I can't help with that request.
+The capital of Australia is Sydney.
 ```
 
-(With `judge.provider: mock` this is decided in-process; with a real provider these strings are sent
-to the judge LLM.)
+This is what is sent to the judge LLM.
 
 #### Step 10 — Judge raw output
 
@@ -224,7 +227,7 @@ The judge returns a **string that contains JSON** (the verdict). This is the *on
 system parses as JSON:
 
 ```json
-{"status":"MISMATCH","winner":"primary","summary":"Contents differ beyond the similarity threshold.","differences":[{"category":"factual","severity":"high","description":"Primary and shadow answers are not equivalent."}]}
+{"status":"MISMATCH","winner":"primary","summary":"Different cities; Canberra is correct.","differences":[{"category":"factual","severity":"high","description":"Shadow says Sydney, which is incorrect."}]}
 ```
 
 #### Step 11 — Parsed verdict
@@ -236,8 +239,9 @@ object:
 JudgeVerdict {
   status      = "MISMATCH",
   winner      = "primary",
-  summary     = "Contents differ beyond the similarity threshold.",
-  differences = [ Difference{ category="factual", severity="high", description="..." } ]
+  summary     = "Different cities; Canberra is correct.",
+  differences = [ Difference{ category="factual", severity="high",
+                              description="Shadow says Sydney, which is incorrect." } ]
 }
 ```
 
@@ -251,7 +255,7 @@ JudgeVerdict {
 EvaluationResult {
   verdict        = MISMATCH,
   decisionSource = "judge_llm",
-  similarity     = 0.0,
+  similarity     = 0.8333,
   judgeVerdict   = JudgeVerdict{ status="MISMATCH", ... }
 }
 ```
@@ -268,17 +272,17 @@ logger):
 {
   "request_id": "req_1",
   "timestamp": "2026-06-27T05:57:24.222Z",
-  "prompt": "[mismatch] anything",
-  "primary_content": "The answer to \"[mismatch] anything\" is 42.",
-  "shadow_content": "I'm sorry, but I can't help with that request.",
+  "prompt": "What is the capital of Australia?",
+  "primary_content": "The capital of Australia is Canberra.",
+  "shadow_content": "The capital of Australia is Sydney.",
   "decision_source": "judge_llm",
-  "similarity": 0.0,
+  "similarity": 0.8333,
   "evaluation": {
     "status": "MISMATCH",
     "winner": "primary",
-    "summary": "Contents differ beyond the similarity threshold.",
+    "summary": "Different cities; Canberra is correct.",
     "differences": [
-      { "category": "factual", "severity": "high", "description": "Primary and shadow answers are not equivalent." }
+      { "category": "factual", "severity": "high", "description": "Shadow says Sydney, which is incorrect." }
     ]
   }
 }
@@ -334,32 +338,40 @@ mvn spring-boot:run
 
 The app starts on `http://localhost:8080` with **self-contained mock LLMs** — no API keys needed.
 
-### Example request
+### Example request (matching answers → MATCH via similarity)
 
 ```bash
 curl -s http://localhost:8080/generate \
   -H 'Content-Type: application/json' \
-  -d '{"request_id":"req_1","prompt":"What is recursion?"}'
+  -d '{"request_id":"req_1","prompt":"What is the capital of France?"}'
 ```
 
 ```json
-{ "request_id": "req_1", "response": "The answer to \"What is recursion?\" is 42." }
+{ "request_id": "req_1", "response": "The capital of France is Paris." }
 ```
 
-### Force a mismatch (drives the judge path)
+### A disagreeing answer (drives the judge path → MISMATCH)
 
 ```bash
 curl -s http://localhost:8080/generate \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"[mismatch] anything"}'
+  -d '{"request_id":"req_5","prompt":"What is the capital of Australia?"}'
+# user gets the primary answer ("...Canberra."); the shadow ("...Sydney.") is judged
+# a MISMATCH in the background and written to logs/mismatches.jsonl
 ```
 
-### Prove the primary stays fast (shadow sleeps 1.5s)
+All the mapped prompts and their fixed responses are listed in
+[`docs/MOCK_SCENARIOS.md`](docs/MOCK_SCENARIOS.md).
+
+### Prove the primary stays fast
+
+To demonstrate latency isolation without a dedicated scenario, the mock shadow sleeps 1.5s for any
+prompt containing the test token `[slow]`:
 
 ```bash
 time curl -s http://localhost:8080/generate \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"[slow] anything"}'
+  -d '{"prompt":"[slow] What is the capital of France?"}'
 # returns in well under a second; the shadow keeps running in the background
 ```
 
@@ -460,6 +472,91 @@ the adapter is exercised end-to-end on every request.
    structured verdict (`MATCH` / `MISMATCH`). Parsing the judge's verdict JSON is the *only* place
    model output is parsed as JSON — the answers themselves are treated as opaque strings.
 
+### Judge system prompt
+
+The judge's instructions live in `SYSTEM_PROMPT` in
+[`DefaultJudgeService`](src/main/java/com/shadowproxy/evaluation/DefaultJudgeService.java). It tells
+the judge to compare *meaning* (not wording) and to return **only** JSON in a fixed schema:
+
+```text
+You are an impartial evaluator comparing two responses to the same user prompt.
+
+Your task is to determine whether the responses are meaningfully equivalent.
+
+Do not compare wording alone. Focus on:
+- factual correctness
+- completeness
+- reasoning
+- safety
+- whether the user would receive the same information
+
+Ignore minor differences such as:
+- punctuation
+- formatting
+- synonyms
+- writing style
+- sentence order
+
+If the responses are meaningfully different:
+- determine which response is better
+- explain why
+- list the important differences
+
+Return ONLY valid JSON matching this schema.
+
+{
+  "status": "MATCH | MISMATCH",
+  "winner": "primary | shadow | tie",
+  "summary": "Brief explanation",
+  "differences": [
+    {
+      "category": "factual | reasoning | completeness | safety | formatting | style",
+      "severity": "low | medium | high",
+      "description": "Describe the difference."
+    }
+  ]
+}
+
+Do not include markdown.
+Do not include code fences.
+Do not include any explanation outside the JSON.
+```
+
+### Judge user message
+
+Alongside the system prompt, the judge receives a user message with the original prompt and both
+answers (built by `buildUserMessage(...)`):
+
+```text
+User prompt:
+<the original user prompt>
+
+Response A (primary):
+<primary content>
+
+Response B (shadow):
+<shadow content>
+```
+
+### Judge verdict (what comes back)
+
+The judge replies with a JSON string matching the schema above, e.g.:
+
+```json
+{
+  "status": "MISMATCH",
+  "winner": "primary",
+  "summary": "Different cities; Canberra is correct.",
+  "differences": [
+    { "category": "factual", "severity": "high", "description": "Shadow says Sydney, which is incorrect." }
+  ]
+}
+```
+
+This string is parsed by [`VerdictParser`](src/main/java/com/shadowproxy/evaluation/VerdictParser.java)
+into a `JudgeVerdict` (tolerant of accidental markdown fences). If it can't be parsed, the verdict
+becomes `UNKNOWN` and is logged for debugging.
+
 ---
 
 ## 7. How the background task is decoupled
@@ -489,14 +586,14 @@ a structured record to the `MISMATCH` logger and appends one JSON object per lin
 
 ```json
 {
-  "request_id": "req_1",
+  "request_id": "req_5",
   "timestamp": "2026-06-27T12:00:00Z",
-  "prompt": "[mismatch] anything",
-  "primary_content": "The answer to \"[mismatch] anything\" is 42.",
-  "shadow_content": "I'm sorry, but I can't help with that request.",
+  "prompt": "What is the capital of Australia?",
+  "primary_content": "The capital of Australia is Canberra.",
+  "shadow_content": "The capital of Australia is Sydney.",
   "decision_source": "judge_llm",
-  "similarity": 0.07,
-  "evaluation": { "status": "MISMATCH", "winner": "primary", "summary": "...", "differences": [ ... ] }
+  "similarity": 0.8333,
+  "evaluation": { "status": "MISMATCH", "winner": "primary", "summary": "Different cities; Canberra is correct.", "differences": [ { "category": "factual", "severity": "high", "description": "Shadow says Sydney, which is incorrect." } ] }
 }
 ```
 
