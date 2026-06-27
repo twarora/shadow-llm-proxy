@@ -205,8 +205,58 @@ threshold      = 0.90
 
 #### Step 9 — Judge input
 
-`DefaultJudgeService` builds two strings: the fixed evaluator **system prompt** and a **user
-message** containing the real prompt and both answers:
+`DefaultJudgeService` sends the judge **two** strings: a fixed **system prompt** (the instructions —
+what the judge must do) and a **user message** (the data — the prompt + both answers).
+
+**(a) System prompt** — `SYSTEM_PROMPT` in
+[`DefaultJudgeService`](src/main/java/com/shadowproxy/evaluation/DefaultJudgeService.java). It tells
+the judge to compare *meaning* (not wording) and to return ONLY JSON in a fixed schema:
+
+```text
+You are an impartial evaluator comparing two responses to the same user prompt.
+
+Your task is to determine whether the responses are meaningfully equivalent.
+
+Do not compare wording alone. Focus on:
+- factual correctness
+- completeness
+- reasoning
+- safety
+- whether the user would receive the same information
+
+Ignore minor differences such as:
+- punctuation
+- formatting
+- synonyms
+- writing style
+- sentence order
+
+If the responses are meaningfully different:
+- determine which response is better
+- explain why
+- list the important differences
+
+Return ONLY valid JSON matching this schema.
+
+{
+  "status": "MATCH | MISMATCH",
+  "winner": "primary | shadow | tie",
+  "summary": "Brief explanation",
+  "differences": [
+    {
+      "category": "factual | reasoning | completeness | safety | formatting | style",
+      "severity": "low | medium | high",
+      "description": "Describe the difference."
+    }
+  ]
+}
+
+Do not include markdown.
+Do not include code fences.
+Do not include any explanation outside the JSON.
+```
+
+**(b) User message** — built by `buildUserMessage(...)`, carrying the real prompt and both answers:
 
 ```text
 User prompt:
@@ -219,7 +269,7 @@ Response B (shadow):
 The capital of Australia is Sydney.
 ```
 
-This is what is sent to the judge LLM.
+Both strings are what get sent to the judge LLM.
 
 #### Step 10 — Judge raw output
 
@@ -472,75 +522,16 @@ the adapter is exercised end-to-end on every request.
    structured verdict (`MATCH` / `MISMATCH`). Parsing the judge's verdict JSON is the *only* place
    model output is parsed as JSON — the answers themselves are treated as opaque strings.
 
-### Judge system prompt
+### Judge system prompt & user message
 
-The judge's instructions live in `SYSTEM_PROMPT` in
-[`DefaultJudgeService`](src/main/java/com/shadowproxy/evaluation/DefaultJudgeService.java). It tells
-the judge to compare *meaning* (not wording) and to return **only** JSON in a fixed schema:
-
-```text
-You are an impartial evaluator comparing two responses to the same user prompt.
-
-Your task is to determine whether the responses are meaningfully equivalent.
-
-Do not compare wording alone. Focus on:
-- factual correctness
-- completeness
-- reasoning
-- safety
-- whether the user would receive the same information
-
-Ignore minor differences such as:
-- punctuation
-- formatting
-- synonyms
-- writing style
-- sentence order
-
-If the responses are meaningfully different:
-- determine which response is better
-- explain why
-- list the important differences
-
-Return ONLY valid JSON matching this schema.
-
-{
-  "status": "MATCH | MISMATCH",
-  "winner": "primary | shadow | tie",
-  "summary": "Brief explanation",
-  "differences": [
-    {
-      "category": "factual | reasoning | completeness | safety | formatting | style",
-      "severity": "low | medium | high",
-      "description": "Describe the difference."
-    }
-  ]
-}
-
-Do not include markdown.
-Do not include code fences.
-Do not include any explanation outside the JSON.
-```
-
-### Judge user message
-
-Alongside the system prompt, the judge receives a user message with the original prompt and both
-answers (built by `buildUserMessage(...)`):
-
-```text
-User prompt:
-<the original user prompt>
-
-Response A (primary):
-<primary content>
-
-Response B (shadow):
-<shadow content>
-```
+The full judge **system prompt** (the instructions + required JSON schema) and the **user message**
+format are shown inline in the data walkthrough above — see
+[Step 9 — Judge input](#step-9--judge-input). It lives in `SYSTEM_PROMPT` in
+[`DefaultJudgeService`](src/main/java/com/shadowproxy/evaluation/DefaultJudgeService.java).
 
 ### Judge verdict (what comes back)
 
-The judge replies with a JSON string matching the schema above, e.g.:
+The judge replies with a JSON string matching the schema, e.g.:
 
 ```json
 {
