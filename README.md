@@ -10,31 +10,70 @@ Built with **Java 21 + Spring Boot**.
 
 ## 1. What it does
 
+### Architecture flow diagram
+
+The diagram below maps the **API layer**, the **synchronous return path** (solid blue), and the
+**decoupled background context** that runs on a separate thread pool (dashed). The hand-off arrow is
+the key boundary: once the primary response is returned, nothing in the shadow path can affect it.
+
+```mermaid
+flowchart TD
+    Client(["Client"])
+
+    subgraph SYNC["① Synchronous request thread — latency-critical"]
+        direction TB
+        EP["POST /generate<br/>GenerateController"]
+        P["Primary LLM<br/>(/mock/primary)"]
+        AP["ProviderAdapter<br/>→ primary content string"]
+        EP --> P --> AP
+    end
+
+    Client -->|prompt| EP
+    AP -->|"HTTP 200 {request_id, response}"| Client
+    P -.->|5xx| ERR["PRIMARY_FAILED (HTTP 502)<br/>shadow skipped"]
+    ERR --> Client
+
+    AP ==>|"fire-and-forget: copy prompt + primary content"| Q
+
+    subgraph ASYNC["② Decoupled shadow path — bounded thread pool (shadowExecutor)"]
+        direction TB
+        Q["Executor queue<br/>(ArrayBlockingQueue)"]
+        S["Shadow LLM<br/>(/mock/shadow)"]
+        AS["ProviderAdapter<br/>→ shadow content string"]
+        SIM{"Semantic similarity<br/>≥ threshold?"}
+        J["Judge LLM<br/>(prompt + both contents)"]
+        VP["VerdictParser"]
+        Q --> S --> AS --> SIM
+        SIM -->|"yes (cheap match)"| RES["EvaluationResult"]
+        SIM -->|"no (inconclusive)"| J --> VP --> RES
+    end
+
+    S -.->|"timeout / 5xx / queue full"| SF["recordShadowFailure()"]
+    RES --> MET["MetricsService<br/>counters"]
+    SF --> MET
+    RES -.->|"MISMATCH only"| LOG[("Mismatch log (.jsonl)<br/>+ MISMATCH SLF4J logger")]
+    MET -.-> MEP["GET /metrics<br/>live match / mismatch rate"]
+
+    classDef sync fill:#dbeafe,stroke:#2563eb,color:#1e3a8a;
+    classDef async fill:#ede9fe,stroke:#7c3aed,color:#4c1d95;
+    classDef fail fill:#fee2e2,stroke:#dc2626,color:#7f1d1d;
+    classDef sink fill:#dcfce7,stroke:#16a34a,color:#14532d;
+    class EP,P,AP sync;
+    class Q,S,AS,SIM,J,VP,RES async;
+    class ERR,SF fail;
+    class MET,LOG,MEP sink;
 ```
-            POST /generate
-                  │
-                  ▼
-        ┌───────────────────┐
-        │   Proxy (FastAPI   │
-        │   equivalent: MVC) │
-        └───────────────────┘
-          │                       (returns to user immediately)
-          ▼
-   Primary LLM ──► Adapter ──► content string ──────────────► HTTP 200 to client
-          │
-          └─ fire-and-forget (separate thread pool) ─┐
-                                                      ▼
-                                            Shadow LLM ──► Adapter ──► content string
-                                                      │
-                                                      ▼
-                                        Semantic similarity check
-                                                      │ (inconclusive)
-                                                      ▼
-                                        Judge LLM (prompt + both contents)
-                                                      │
-                                                      ▼
-                                        Metrics + mismatch logging
-```
+
+**Reading the diagram**
+
+- **① Synchronous path (blue):** `GenerateController` calls the primary LLM, the `ProviderAdapter`
+  reduces the envelope to a content string, and the answer is returned to the client immediately.
+- **Hand-off (thick arrow):** the controller copies the `prompt` + `primaryContent` and submits a
+  fire-and-forget task to the `shadowExecutor`, then returns. This is where the request thread ends.
+- **② Decoupled path (purple):** runs entirely on the bounded thread pool — shadow call → adapter →
+  similarity → (judge only if inconclusive) → metrics, and a mismatch log entry **only** on MISMATCH.
+- **Failure edges (red):** a primary 5xx returns `PRIMARY_FAILED` and **skips the shadow**; any shadow
+  timeout/error/queue-full is caught and recorded as a `shadow_failure` — never surfaced to the client.
 
 - **Synchronous primary** — the user always gets the primary model's answer immediately.
 - **Asynchronous shadow** — the candidate model runs in the background and the user never sees it.
