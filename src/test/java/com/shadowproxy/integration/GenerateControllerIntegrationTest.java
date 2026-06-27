@@ -55,14 +55,15 @@ class GenerateControllerIntegrationTest {
         long start = System.currentTimeMillis();
         ResponseEntity<Map> response = rest.postForEntity(
                 "/generate",
-                Map.of("prompt", "[slow] what is recursion?"),
+                Map.of("prompt", "Run the slow diagnostic check."),
                 Map.class);
         long elapsed = System.currentTimeMillis() - start;
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(response.getBody()).isNotNull();
-        assertThat(response.getBody().get("response").toString()).contains("42");
-        // The shadow mock sleeps 1500ms; the primary must come back well before that.
+        assertThat(response.getBody().get("response").toString()).contains("Diagnostic complete");
+        // The slow_shadow_match scenario delays the shadow 1500ms; the primary must come back well
+        // before that.
         assertThat(elapsed).isLessThan(1000L);
     }
 

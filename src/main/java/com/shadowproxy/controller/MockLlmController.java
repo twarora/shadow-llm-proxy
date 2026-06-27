@@ -15,15 +15,14 @@ import java.util.Optional;
 /**
  * Simulated LLM endpoints so the whole system runs end-to-end with no external API or keys.
  *
- * <p>Each mock first looks up the prompt in the {@link ScenarioStore}. If a scenario matches, the
- * mapped provider response (or error) is returned — so a real prompt like
+ * <p>Each mock looks up the prompt in the {@link ScenarioStore}. If a scenario matches, the mapped
+ * provider response (or error) is returned — so a real prompt like
  * {@code "What is the capital of Australia?"} deterministically drives the primary answer, the
- * shadow answer, and the judge verdict. If no scenario matches, the mocks fall back to simple
- * default behavior, with two control tokens for ad-hoc testing:
- * <ul>
- *   <li>{@code [mismatch]} → shadow returns a clearly different answer</li>
- *   <li>{@code [slow]}     → shadow sleeps, to prove the primary path is unaffected</li>
- * </ul>
+ * shadow answer, and the judge verdict. A scenario may also declare {@code shadow_delay_ms} to
+ * simulate a slow shadow (used to prove the primary path is unaffected by shadow latency).
+ *
+ * <p>Prompts with no matching scenario fall back to a simple default answer (returned identically by
+ * primary and shadow, so they resolve to a MATCH).
  *
  * The envelopes intentionally differ by provider to exercise the adapter layer:
  * primary = OpenAI shape, shadow = Anthropic shape, judge = OpenAI shape (content is verdict JSON).
@@ -73,20 +72,19 @@ public class MockLlmController {
                 return ResponseEntity.status(HttpStatus.GATEWAY_TIMEOUT)
                         .body(Map.of("error", error.path("message").asText("shadow failed")));
             }
+            // Optional simulated latency to prove the primary path is unaffected.
+            long delayMs = s.path("shadow_delay_ms").asLong(0);
+            if (delayMs > 0) {
+                Thread.sleep(delayMs);
+            }
             JsonNode response = s.path("shadow_response");
             if (!response.isMissingNode() && !response.isNull()) {
                 return ResponseEntity.ok(response);
             }
         }
 
-        // Fallback default behavior with control tokens.
-        if (prompt.toLowerCase().contains("[slow]")) {
-            Thread.sleep(1500);
-        }
-        String content = prompt.toLowerCase().contains("[mismatch]")
-                ? "I'm sorry, but I can't help with that request."
-                : defaultAnswer(prompt);
-        return ResponseEntity.ok(anthropicEnvelope("mock-shadow-v1", content));
+        // Fallback: same answer as the default primary → resolves to a MATCH.
+        return ResponseEntity.ok(anthropicEnvelope("mock-shadow-v1", defaultAnswer(prompt)));
     }
 
     @PostMapping("/mock/judge")

@@ -285,6 +285,30 @@
       "final": { "verdict": "UNKNOWN", "decision_source": "judge_llm" }
     },
     {
+      "id": "slow_shadow_match",
+      "title": "Slow shadow, identical answer (latency isolation)",
+      "description": "The shadow model is slow (simulated via shadow_delay_ms) but returns the same answer. Proves the primary path is unaffected by shadow latency; resolves to MATCH via similarity once the shadow eventually finishes.",
+      "prompt": "Run the slow diagnostic check.",
+      "primary_response": {
+        "id": "chatcmpl-010",
+        "model": "gpt-4-turbo",
+        "choices": [
+          { "index": 0, "message": { "role": "assistant", "content": "Diagnostic complete: all systems normal." }, "finish_reason": "stop" }
+        ]
+      },
+      "primary_content": "Diagnostic complete: all systems normal.",
+      "shadow_response": {
+        "id": "msg-010",
+        "model": "claude-3-5",
+        "content": [ { "type": "text", "text": "Diagnostic complete: all systems normal." } ]
+      },
+      "shadow_content": "Diagnostic complete: all systems normal.",
+      "shadow_delay_ms": 1500,
+      "similarity": { "score": 1.0, "threshold": 0.90, "judge_invoked": false },
+      "judge": null,
+      "final": { "verdict": "MATCH", "decision_source": "semantic_similarity" }
+    },
+    {
       "id": "primary_failure",
       "title": "Primary model fails → error, shadow skipped",
       "description": "The primary endpoint returns an error. The proxy responds with PRIMARY_FAILED and does NOT trigger the shadow comparison.",

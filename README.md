@@ -415,13 +415,13 @@ All the mapped prompts and their fixed responses are listed in
 
 ### Prove the primary stays fast
 
-To demonstrate latency isolation without a dedicated scenario, the mock shadow sleeps 1.5s for any
-prompt containing the test token `[slow]`:
+The `slow_shadow_match` scenario simulates a slow shadow (its `shadow_delay_ms` makes the mock shadow
+wait 1.5s) while the primary answers normally:
 
 ```bash
 time curl -s http://localhost:8080/generate \
   -H 'Content-Type: application/json' \
-  -d '{"prompt":"[slow] What is the capital of France?"}'
+  -d '{"prompt":"Run the slow diagnostic check."}'
 # returns in well under a second; the shadow keeps running in the background
 ```
 
